@@ -21,7 +21,7 @@ The backend stores the payload in a normalized structure:
   - child rows for each statement transaction
   - stores raw `MM/DD` label plus parsed month/day for sorting
 
-The Prisma schema lives in [server/prisma/schema.prisma](/Users/shakya/Documents/personal-files/finance-mgt/finance-dashboard/server/prisma/schema.prisma).
+The Prisma schema lives in [server/prisma/schema.prisma](/Users/shakya/Documents/personal-files/finance-mgt/BalanceBoard/server/prisma/schema.prisma).
 
 ## API endpoints
 
@@ -42,7 +42,10 @@ Your sample schema has a mismatch:
 - property list uses `minimum_amount`
 - required list uses `total_payable`
 
-The backend accepts either `minimum_amount` or `total_payable` and normalizes both into the stored `totalPayable` field. It still requires `name`, `date`, `monthly_amount`, `due_date`, and `transactions`.
+The backend accepts either `minimum_amount` or `total_payable` for the minimum due amount. It stores:
+
+- `monthly_amount` as `totalPayable`
+- `minimum_amount` or `total_payable` as `amountDue`
 
 ## Example payload
 
@@ -74,7 +77,7 @@ The backend accepts either `minimum_amount` or `total_payable` and normalizes bo
 
 1. Install Node.js 20+.
 2. Run `npm install`.
-3. Copy `server/.env.example` to `server/.env` and set `DATABASE_URL`.
+3. Copy [server/.env.example](/Users/shakya/Documents/personal-files/finance-mgt/BalanceBoard/server/.env.example) to `server/.env` and set either `DATABASE_URL` or the `DB_*` values.
 4. Copy `client/.env.example` to `client/.env` if you want a custom API URL.
 5. Run `npm run prisma:generate --workspace server`.
 6. Run `npm run prisma:push --workspace server`.
@@ -84,10 +87,10 @@ The backend accepts either `minimum_amount` or `total_payable` and normalizes bo
 
 The repo now includes:
 
-- [docker-compose.yml](/Users/shakya/Documents/personal-files/finance-mgt/finance-dashboard/docker-compose.yml)
-- [server/Dockerfile](/Users/shakya/Documents/personal-files/finance-mgt/finance-dashboard/server/Dockerfile)
-- [client/Dockerfile](/Users/shakya/Documents/personal-files/finance-mgt/finance-dashboard/client/Dockerfile)
-- [client/nginx.conf](/Users/shakya/Documents/personal-files/finance-mgt/finance-dashboard/client/nginx.conf)
+- [docker-compose.yml](/Users/shakya/Documents/personal-files/finance-mgt/BalanceBoard/docker-compose.yml)
+- [server/Dockerfile](/Users/shakya/Documents/personal-files/finance-mgt/BalanceBoard/server/Dockerfile)
+- [client/Dockerfile](/Users/shakya/Documents/personal-files/finance-mgt/BalanceBoard/client/Dockerfile)
+- [client/nginx.conf](/Users/shakya/Documents/personal-files/finance-mgt/BalanceBoard/client/nginx.conf)
 
 ### What gets containerized
 
@@ -97,23 +100,29 @@ The repo now includes:
 
 The frontend proxies `/api` requests to the backend through Nginx, so you only need to open one browser URL.
 
-### Docker steps for an existing database
+### Docker steps for a separately started database container
 
-1. Copy [.env.docker.example](/Users/shakya/Documents/personal-files/finance-mgt/finance-dashboard/.env.docker.example) to `.env`:
+1. Copy [.env.docker.example](/Users/shakya/Documents/personal-files/finance-mgt/BalanceBoard/.env.docker.example) to `.env`:
 
 ```bash
 cp .env.docker.example .env
 ```
 
-2. Edit `DATABASE_URL` in `.env` so it points to your already-running PostgreSQL instance.
+2. Edit `.env` so the `server` container can reach the database container you started manually.
 
 Example:
 
 ```env
-DATABASE_URL=postgresql://finance_user:strong_password@10.0.0.15:5432/finance_dashboard?schema=public
+APP_NETWORK=balanceboard-net
+DB_HOST=your-db-container
+DB_PORT=5432
+DB_NAME=finance_dashboard
+DB_USER=finance_user
+DB_PASSWORD=strong_password
+DB_SCHEMA=public
 ```
 
-3. Build and start the app containers:
+3. Build and start the app services:
 
 ```bash
 docker compose up --build -d
@@ -131,13 +140,35 @@ http://localhost:8080
 http://localhost:4000/api/health
 ```
 
+You can still use `DATABASE_URL` directly if you prefer. If the DB is running in another container, both containers must be on the same Docker network and `DB_HOST` must match that container name or alias.
+
+For a manually started DB container, either:
+
+1. Start it on the same Docker network as this app:
+
+```bash
+docker network create balanceboard-net
+docker run -d --name apimdb --network balanceboard-net -p 5432:5432 \
+  -e POSTGRES_DB=finance_dashboard \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=root \
+  postgres:17
+```
+
+2. Or connect an already-running DB container to that network:
+
+```bash
+docker network connect balanceboard-net apimdb
+```
+
+If you prefer to reach the DB through the host-published port instead of Docker DNS, set `DB_HOST=host.docker.internal`. The compose file includes a host-gateway mapping for the server container.
+
 ### Docker steps with the bundled local database
 
 If you want Docker to also run PostgreSQL locally, start the `local-db` profile:
 
 ```bash
-DATABASE_URL=postgresql://finance_user:finance_password@db:5432/finance_dashboard?schema=public \
-docker compose --profile local-db up --build -d
+DB_HOST=db docker compose --profile local-db up --build -d
 ```
 
 ### Useful Docker commands
@@ -163,10 +194,11 @@ docker compose up --build
 ### Notes
 
 - The backend container runs `prisma db push` automatically on startup.
-- `RUN npx prisma generate` in the backend image generates the Prisma client code from [server/prisma/schema.prisma](/Users/shakya/Documents/personal-files/finance-mgt/finance-dashboard/server/prisma/schema.prisma), so your app can call the database using typed Prisma APIs at runtime.
+- The backend accepts either a full `DATABASE_URL` or separate `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, and `DB_SCHEMA` variables.
+- `RUN npx prisma generate` in the backend image generates the Prisma client code from [server/prisma/schema.prisma](/Users/shakya/Documents/personal-files/finance-mgt/BalanceBoard/server/prisma/schema.prisma), so your app can call the database using typed Prisma APIs at runtime.
 - `npx prisma generate` does not connect to the database or change tables. It only builds the client library.
 - `npx prisma db push` is the command that actually syncs the schema to the target database.
-- For VM deployment with an existing DB, the only required change is setting `DATABASE_URL` in `.env` to that database host.
+- For service deployment with another DB container, the only required change is setting `DATABASE_URL` or the `DB_*` variables in `.env` to that container's reachable hostname on a shared Docker network.
 
 ## Dashboard behavior
 

@@ -1,4 +1,7 @@
 import { PrismaClient } from "@prisma/client";
+import { configureDatabaseUrl } from "../utils/database.js";
+
+configureDatabaseUrl();
 
 const globalForPrisma = globalThis;
 
@@ -11,4 +14,3 @@ export const prisma =
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
 }
-

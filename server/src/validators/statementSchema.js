@@ -42,8 +42,8 @@ export function normalizeStatementPayload(payload) {
     statementDate: parseShortYearDate(parsed.date, "date", dateOrder),
     rawDueDate: parsed.due_date,
     dueDate: parseShortYearDate(parsed.due_date, "due_date", dateOrder),
-    totalPayable: parsed.minimum_amount ?? parsed.total_payable,
-    amountDue: parsed.monthly_amount,
+    totalPayable: parsed.monthly_amount,
+    amountDue: parsed.minimum_amount ?? parsed.total_payable,
     transactions: parsed.transactions.map((transaction, index) => {
       const parsedDate = parseMonthDay(
         transaction.date,

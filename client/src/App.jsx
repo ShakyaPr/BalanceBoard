@@ -1,9 +1,9 @@
 import React, { useDeferredValue, useEffect, useRef, useState } from "react";
 import { fetchCardDetails, fetchDashboard, recordStatementPayment } from "./api.js";
 
-const currencyFormatter = new Intl.NumberFormat("en-US", {
+const currencyFormatter = new Intl.NumberFormat("en-LK", {
   style: "currency",
-  currency: "USD",
+  currency: "LKR",
   maximumFractionDigits: 2,
 });
 
