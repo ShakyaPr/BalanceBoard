@@ -22,6 +22,10 @@ export function fetchDashboard() {
   return request("/dashboard");
 }
 
+export function fetchAnalytics() {
+  return request("/analytics");
+}
+
 export function fetchCardDetails(cardId) {
   return request(`/cards/${cardId}`);
 }

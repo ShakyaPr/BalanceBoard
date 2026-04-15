@@ -1,5 +1,10 @@
 import React, { useDeferredValue, useEffect, useRef, useState } from "react";
-import { fetchCardDetails, fetchDashboard, recordStatementPayment } from "./api.js";
+import {
+  fetchAnalytics,
+  fetchCardDetails,
+  fetchDashboard,
+  recordStatementPayment,
+} from "./api.js";
 
 const currencyFormatter = new Intl.NumberFormat("en-LK", {
   style: "currency",
@@ -20,6 +25,12 @@ const monthFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: "UTC",
 });
 
+const chartMonthFormatter = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  year: "2-digit",
+  timeZone: "UTC",
+});
+
 const timestampFormatter = new Intl.DateTimeFormat("en-US", {
   month: "short",
   day: "numeric",
@@ -33,6 +44,19 @@ const cardVisuals = [
   { icon: "account_balance_wallet", tone: "secondary" },
   { icon: "savings", tone: "primary" },
   { icon: "workspace_premium", tone: "secondary" },
+];
+
+const navigationItems = [
+  {
+    id: "dashboard",
+    label: "Dashboard",
+    icon: "dashboard",
+  },
+  {
+    id: "analytics",
+    label: "Analytics",
+    icon: "analytics",
+  },
 ];
 
 function formatCurrency(value) {
@@ -70,6 +94,14 @@ function formatMonth(value) {
   }
 
   return monthFormatter.format(new Date(value));
+}
+
+function formatChartMonth(value) {
+  if (!value) {
+    return "N/A";
+  }
+
+  return chartMonthFormatter.format(new Date(value));
 }
 
 function formatTimestamp(value) {
@@ -110,9 +142,7 @@ function getCardStatus(card) {
     };
   }
 
-  const { dueDate } = card;
-
-  if (!dueDate) {
+  if (!card.dueDate) {
     return {
       label: "Awaiting Date",
       tone: "neutral",
@@ -120,7 +150,9 @@ function getCardStatus(card) {
     };
   }
 
-  const daysUntilDue = Math.ceil((startOfUtcDay(dueDate) - startOfUtcDay(new Date())) / (1000 * 60 * 60 * 24));
+  const daysUntilDue = Math.ceil(
+    (startOfUtcDay(card.dueDate) - startOfUtcDay(new Date())) / (1000 * 60 * 60 * 24),
+  );
 
   if (daysUntilDue < 0) {
     return {
@@ -169,7 +201,11 @@ function getTransactionIcon(description = "", type = "debit") {
     return "payments";
   }
 
-  if (normalizedDescription.includes("restaurant") || normalizedDescription.includes("cafe") || normalizedDescription.includes("food")) {
+  if (
+    normalizedDescription.includes("restaurant") ||
+    normalizedDescription.includes("cafe") ||
+    normalizedDescription.includes("food")
+  ) {
     return "restaurant";
   }
 
@@ -196,13 +232,70 @@ function getTransactionIcon(description = "", type = "debit") {
   return "credit_card";
 }
 
+function getAnalyticsTrend(summary) {
+  if (!summary.latestMonthStart) {
+    return {
+      tone: "neutral",
+      icon: "schedule",
+      label: "Waiting for imported transactions",
+    };
+  }
+
+  if (summary.monthOverMonthAmount === null) {
+    return {
+      tone: "neutral",
+      icon: "insights",
+      label: "First tracked month",
+    };
+  }
+
+  if (summary.monthOverMonthAmount === 0) {
+    return {
+      tone: "neutral",
+      icon: "trending_flat",
+      label: "Flat versus last month",
+    };
+  }
+
+  if (summary.monthOverMonthDirection === "down") {
+    return {
+      tone: "positive",
+      icon: "trending_down",
+      label:
+        summary.monthOverMonthPercentage !== null
+          ? `${Math.abs(summary.monthOverMonthPercentage).toFixed(1)}% lower than last month`
+          : `${formatCurrency(Math.abs(summary.monthOverMonthAmount))} lower than last month`,
+    };
+  }
+
+  return {
+    tone: "caution",
+    icon: "trending_up",
+    label:
+      summary.monthOverMonthPercentage !== null
+        ? `${summary.monthOverMonthPercentage.toFixed(1)}% higher than last month`
+        : `${formatCurrency(summary.monthOverMonthAmount)} higher than last month`,
+  };
+}
+
 function readSelectedCardIdFromUrl() {
   const params = new URLSearchParams(window.location.search);
   return params.get("card") ?? "";
 }
 
-function writeSelectedCardIdToUrl(cardId) {
+function readSelectedViewFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("view") === "analytics" ? "analytics" : "dashboard";
+}
+
+function writeAppStateToUrl({ view = "dashboard", cardId = "" }) {
   const url = new URL(window.location.href);
+
+  if (view === "analytics") {
+    url.searchParams.set("view", "analytics");
+  } else {
+    url.searchParams.delete("view");
+  }
 
   if (cardId) {
     url.searchParams.set("card", cardId);
@@ -211,6 +304,41 @@ function writeSelectedCardIdToUrl(cardId) {
   }
 
   window.history.pushState({}, "", `${url.pathname}${url.search}`);
+}
+
+function LoadingCard({ kicker, title, description }) {
+  return (
+    <div className="loading-card">
+      <p className="section-kicker">{kicker}</p>
+      <h1>{title}</h1>
+      <p>{description}</p>
+    </div>
+  );
+}
+
+function SidebarNavigation({ selectedView, onNavigate }) {
+  return (
+    <>
+      <div className="sidebar-brand">
+        <h1>Private Ledger</h1>
+        <p>Premium Tier</p>
+      </div>
+
+      <nav className="sidebar-nav">
+        {navigationItems.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={`sidebar-nav-link ${selectedView === item.id ? "active" : ""}`}
+            onClick={() => onNavigate(item.id)}
+          >
+            <span className="material-symbols-outlined">{item.icon}</span>
+            {item.label}
+          </button>
+        ))}
+      </nav>
+    </>
+  );
 }
 
 function SummaryCard({
@@ -348,7 +476,10 @@ function EmptyState() {
     <div className="empty-state-panel">
       <p className="section-kicker">Executive Overview</p>
       <h2>No card statements yet.</h2>
-      <p>Post your statement payloads to the API and the overview will automatically populate with balances, due dates, and summary rows for each card.</p>
+      <p>
+        Post your statement payloads to the API and the overview will automatically populate with
+        balances, due dates, and summary rows for each card.
+      </p>
     </div>
   );
 }
@@ -480,7 +611,10 @@ function CardDetailsPage({
   detailError,
 }) {
   const statements = detailCard?.statements ?? [];
-  const selectedStatement = statements.find((statement) => statement.statementId === selectedStatementId) ?? statements[0] ?? null;
+  const selectedStatement =
+    statements.find((statement) => statement.statementId === selectedStatementId) ??
+    statements[0] ??
+    null;
 
   return (
     <>
@@ -517,7 +651,10 @@ function CardDetailsPage({
 
               <label className="statement-select-field">
                 <span>Statement Month</span>
-                <select value={selectedStatement.statementId} onChange={(event) => setSelectedStatementId(event.target.value)}>
+                <select
+                  value={selectedStatement.statementId}
+                  onChange={(event) => setSelectedStatementId(event.target.value)}
+                >
                   {statements.map((statement) => (
                     <option key={statement.statementId} value={statement.statementId}>
                       {formatMonth(statement.statementDate)}
@@ -547,7 +684,10 @@ function CardDetailsPage({
               {selectedStatement.transactions.length === 0 ? (
                 <div className="empty-state-panel compact">
                   <h2>No transactions in this statement.</h2>
-                  <p>The selected month exists, but it does not contain any imported transaction rows.</p>
+                  <p>
+                    The selected month exists, but it does not contain any imported transaction
+                    rows.
+                  </p>
                 </div>
               ) : (
                 <div className="activity-panel">
@@ -578,9 +718,15 @@ function CardDetailsPage({
                               </div>
                             </td>
                             <td>
-                              <span className={`summary-status ${transaction.type}`}>{transaction.type}</span>
+                              <span className={`summary-status ${transaction.type}`}>
+                                {transaction.type}
+                              </span>
                             </td>
-                            <td className={transaction.type === "credit" ? "amount-credit" : "amount-debit"}>
+                            <td
+                              className={
+                                transaction.type === "credit" ? "amount-credit" : "amount-debit"
+                              }
+                            >
                               {formatCurrency(transaction.amount)}
                             </td>
                           </tr>
@@ -598,10 +744,152 @@ function CardDetailsPage({
   );
 }
 
+function AnalyticsPage({ analytics, analyticsLoading, analyticsError }) {
+  const summary = analytics?.summary ?? {
+    monthsTracked: 0,
+    latestMonthStart: null,
+    latestMonthSpend: 0,
+    previousMonthSpend: 0,
+    highestMonthStart: null,
+    highestMonthSpend: 0,
+    averageMonthlySpend: 0,
+    monthOverMonthAmount: null,
+    monthOverMonthPercentage: null,
+    monthOverMonthDirection: "flat",
+  };
+  const series = analytics?.series ?? [];
+  const trend = getAnalyticsTrend(summary);
+  const maxSpend = Math.max(...series.map((entry) => entry.totalSpend), 1);
+
+  return (
+    <>
+      <header className="analytics-topbar">
+        <div>
+          <p className="section-kicker">Trend View</p>
+          <h2>Analytics</h2>
+        </div>
+
+        <div className="analytics-period-pill">
+          <span>Latest Month</span>
+          <strong>
+            {summary.latestMonthStart ? formatMonth(summary.latestMonthStart) : "No data yet"}
+          </strong>
+        </div>
+      </header>
+
+      <main className="analytics-content">
+        {analyticsLoading && !analytics ? (
+          <div className="empty-state-panel compact">
+            <h2>Loading analytics.</h2>
+            <p>Preparing your month-by-month spending trend from imported transactions.</p>
+          </div>
+        ) : analyticsError ? (
+          <div className="empty-state-panel compact">
+            <h2>Unable to load analytics.</h2>
+            <p>{analyticsError}</p>
+          </div>
+        ) : series.length === 0 ? (
+          <div className="empty-state-panel compact">
+            <h2>No monthly spending data yet.</h2>
+            <p>
+              Import statements and the service will group debit transactions by posted month to
+              build the spending trend automatically.
+            </p>
+          </div>
+        ) : (
+          <>
+            <section className="analytics-hero-grid">
+              <article className="analytics-hero-card">
+                <p className="section-kicker">Latest Monthly Spending</p>
+                <div className="analytics-hero-value-row">
+                  <strong>{renderExecutiveCurrency(summary.latestMonthSpend)}</strong>
+                  <span className={`analytics-trend-pill ${trend.tone}`}>
+                    <span className="material-symbols-outlined">{trend.icon}</span>
+                    {trend.label}
+                  </span>
+                </div>
+                <p className="analytics-hero-caption">
+                  Calculated from debit transactions posted in{" "}
+                  {formatMonth(summary.latestMonthStart)}.
+                </p>
+              </article>
+
+              <article className="analytics-stat-card">
+                <span>Average month</span>
+                <strong>{formatCurrency(summary.averageMonthlySpend)}</strong>
+                <p>{summary.monthsTracked} tracked months</p>
+              </article>
+
+              <article className="analytics-stat-card">
+                <span>Highest month</span>
+                <strong>{formatCurrency(summary.highestMonthSpend)}</strong>
+                <p>
+                  {summary.highestMonthStart
+                    ? formatMonth(summary.highestMonthStart)
+                    : "No month yet"}
+                </p>
+              </article>
+            </section>
+
+            <section className="analytics-chart-card">
+              <div className="analytics-chart-header">
+                <div>
+                  <h3>Spending Trend</h3>
+                  <p>
+                    Month-by-month totals are saved from transaction dates when each statement is
+                    imported, even when a statement spans two months.
+                  </p>
+                </div>
+
+                <div className="analytics-chart-legend">
+                  <span className="analytics-chart-legend-dot"></span>
+                  Stored monthly totals
+                </div>
+              </div>
+
+              <div className="analytics-chart-scroll">
+                <div className="analytics-chart">
+                  {series.map((entry, index) => {
+                    const height = Math.max(12, Math.round((entry.totalSpend / maxSpend) * 100));
+                    const isLatest = index === series.length - 1;
+
+                    return (
+                      <div key={entry.monthStart} className="analytics-bar-column">
+                        <span className={`analytics-bar-value ${isLatest ? "latest" : ""}`}>
+                          {formatCurrency(entry.totalSpend)}
+                        </span>
+
+                        <div className="analytics-bar-track">
+                          <div
+                            className={`analytics-bar ${isLatest ? "latest" : ""}`}
+                            style={{ height: `${height}%` }}
+                          ></div>
+                        </div>
+
+                        <span className={`analytics-bar-label ${isLatest ? "latest" : ""}`}>
+                          {formatChartMonth(entry.monthStart)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </section>
+          </>
+        )}
+      </main>
+    </>
+  );
+}
+
 function App() {
+  const [selectedView, setSelectedView] = useState(() => readSelectedViewFromUrl());
   const [dashboard, setDashboard] = useState(null);
+  const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [analyticsLoading, setAnalyticsLoading] = useState(true);
   const [error, setError] = useState("");
+  const [analyticsError, setAnalyticsError] = useState("");
   const [selectedCardId, setSelectedCardId] = useState(() => readSelectedCardIdFromUrl());
   const [detailCard, setDetailCard] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -638,8 +926,31 @@ function App() {
     }
   }
 
+  async function loadAnalytics({ silent = false } = {}) {
+    if (!silent) {
+      setAnalyticsLoading(true);
+    }
+
+    try {
+      const snapshot = await fetchAnalytics();
+
+      if (mountedRef.current) {
+        setAnalytics(snapshot);
+        setAnalyticsError("");
+      }
+    } catch (requestError) {
+      if (mountedRef.current) {
+        setAnalyticsError(requestError.message);
+      }
+    } finally {
+      if (mountedRef.current) {
+        setAnalyticsLoading(false);
+      }
+    }
+  }
+
   async function loadCardDetails(cardId) {
-    if (!cardId) {
+    if (!cardId || selectedView !== "dashboard") {
       setDetailCard(null);
       setDetailError("");
       setSelectedStatementId("");
@@ -674,12 +985,15 @@ function App() {
   useEffect(() => {
     mountedRef.current = true;
     loadDashboard();
+    loadAnalytics();
 
     const timer = setInterval(() => {
       loadDashboard({ silent: true });
+      loadAnalytics({ silent: true });
     }, 30000);
 
     const handlePopState = () => {
+      setSelectedView(readSelectedViewFromUrl());
       setSelectedCardId(readSelectedCardIdFromUrl());
     };
 
@@ -694,22 +1008,40 @@ function App() {
 
   useEffect(() => {
     loadCardDetails(selectedCardId);
-  }, [selectedCardId]);
+  }, [selectedCardId, selectedView]);
 
-  const cards = dashboard?.cards ?? [];
-  const isDetailPage = Boolean(selectedCardId);
+  const isDetailPage = selectedView === "dashboard" && Boolean(selectedCardId);
+
+  function navigateToView(view) {
+    setSelectedView(view);
+    setSelectedCardId("");
+    setDetailCard(null);
+    setDetailError("");
+    setSelectedStatementId("");
+    writeAppStateToUrl({
+      view,
+      cardId: "",
+    });
+  }
 
   function openCard(card) {
+    setSelectedView("dashboard");
     setSelectedCardId(card.id);
     setSelectedStatementId(card.statementId);
-    writeSelectedCardIdToUrl(card.id);
+    writeAppStateToUrl({
+      view: "dashboard",
+      cardId: card.id,
+    });
   }
 
   function closeCardDetails() {
     setSelectedCardId("");
     setDetailCard(null);
     setSelectedStatementId("");
-    writeSelectedCardIdToUrl("");
+    writeAppStateToUrl({
+      view: "dashboard",
+      cardId: "",
+    });
   }
 
   function togglePayment(statementId) {
@@ -717,7 +1049,9 @@ function App() {
       ...currentErrors,
       [statementId]: "",
     }));
-    setOpenPaymentStatementId((currentStatementId) => (currentStatementId === statementId ? "" : statementId));
+    setOpenPaymentStatementId((currentStatementId) =>
+      currentStatementId === statementId ? "" : statementId,
+    );
   }
 
   function updatePaymentDraft(statementId, value) {
@@ -767,14 +1101,14 @@ function App() {
     }
   }
 
-  if (loading && !dashboard) {
+  if (selectedView === "dashboard" && loading && !dashboard) {
     return (
       <div className="loading-screen">
-        <div className="loading-card">
-          <p className="section-kicker">Private Ledger</p>
-          <h1>Loading overview dashboard.</h1>
-          <p>Preparing the latest balances and card summaries from your imported statements.</p>
-        </div>
+        <LoadingCard
+          kicker="Private Ledger"
+          title="Loading overview dashboard."
+          description="Preparing the latest balances and card summaries from your imported statements."
+        />
       </div>
     );
   }
@@ -782,16 +1116,21 @@ function App() {
   return (
     <div className="overview-shell">
       <aside className="overview-sidebar">
-        <div className="sidebar-brand">
-          <h1>Private Ledger</h1>
-          <p>Premium Tier</p>
-        </div>
+        <SidebarNavigation selectedView={selectedView} onNavigate={navigateToView} />
       </aside>
 
       <div className="overview-main">
-        {error ? <div className="error-banner page-error">{error}</div> : null}
+        {selectedView === "dashboard" && error ? (
+          <div className="error-banner page-error">{error}</div>
+        ) : null}
 
-        {isDetailPage ? (
+        {selectedView === "analytics" ? (
+          <AnalyticsPage
+            analytics={analytics}
+            analyticsLoading={analyticsLoading}
+            analyticsError={analyticsError}
+          />
+        ) : isDetailPage ? (
           <CardDetailsPage
             detailCard={detailCard}
             selectedStatementId={selectedStatementId}

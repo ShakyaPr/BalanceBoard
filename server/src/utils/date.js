@@ -52,6 +52,24 @@ export function parseMonthDay(value, fieldName, dateOrder = DATE_ORDER.MONTH_DAY
   };
 }
 
+export function inferTransactionDate({ statementDate, month, day, fieldName = "transaction date" }) {
+  const statementUtcDate = new Date(statementDate);
+  const statementYear = statementUtcDate.getUTCFullYear();
+
+  let postedOnDate = createValidatedUtcDate(statementYear, month, day, fieldName);
+
+  if (postedOnDate.getTime() > statementUtcDate.getTime()) {
+    postedOnDate = createValidatedUtcDate(statementYear - 1, month, day, fieldName);
+  }
+
+  return postedOnDate;
+}
+
+export function getUtcMonthStart(value) {
+  const date = new Date(value);
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
 export function toIsoDate(value) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
