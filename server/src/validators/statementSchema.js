@@ -35,6 +35,11 @@ const statementPayloadSchema = z
 
 export function normalizeStatementPayload(payload) {
   const parsed = statementPayloadSchema.parse(payload);
+  const rawAmountDue = parsed.minimum_amount ?? parsed.total_payable;
+  const [totalPayable, amountDue] =
+    rawAmountDue !== undefined && rawAmountDue > parsed.monthly_amount
+      ? [rawAmountDue, parsed.monthly_amount]
+      : [parsed.monthly_amount, rawAmountDue];
   const dateOrder = detectDateOrder([
     parsed.date,
     parsed.due_date,
@@ -49,8 +54,8 @@ export function normalizeStatementPayload(payload) {
     statementDate,
     rawDueDate: parsed.due_date,
     dueDate,
-    totalPayable: parsed.monthly_amount,
-    amountDue: parsed.minimum_amount ?? parsed.total_payable,
+    totalPayable,
+    amountDue,
     transactions: parsed.transactions.map((transaction, index) => {
       const parsedDate = parseMonthDay(
         transaction.date,
