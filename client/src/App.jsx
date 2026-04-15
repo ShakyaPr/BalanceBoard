@@ -240,6 +240,11 @@ function SummaryCard({
         </div>
 
         <div className="summary-metric">
+          <span>Due Date</span>
+          <strong>{formatDate(card.dueDate)}</strong>
+        </div>
+
+        <div className="summary-metric">
           <span>Total Payable</span>
           <strong>{formatCurrency(card.totalPayable)}</strong>
         </div>
