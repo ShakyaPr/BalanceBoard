@@ -10,6 +10,44 @@ function roundCurrency(value) {
   return Number(toNumber(value).toFixed(2));
 }
 
+const paymentLikeCreditPatterns = [
+  /\bpayment\s+received\b/i,
+  /\bpayment\s+recieved\b/i,
+  /\breceived\s+payment\b/i,
+  /\bonline\s+payment\b/i,
+  /\bcard\s+payment\b/i,
+  /\bcash\s+payment\b/i,
+  /\bbank\s+payment\b/i,
+  /\bpayment\b.*\bthank\s+you\b/i,
+  /\bthank\s+you\b.*\bpayment\b/i,
+  /\bautopay\b/i,
+  /\bauto\s*pay\b/i,
+];
+
+function isPaymentLikeCredit(transaction) {
+  if (transaction.type !== "credit") {
+    return false;
+  }
+
+  const normalizedDescription = transaction.description?.replace(/\s+/g, " ").trim() ?? "";
+
+  return paymentLikeCreditPatterns.some((pattern) => pattern.test(normalizedDescription));
+}
+
+function getSpendImpact(transaction) {
+  const amount = toNumber(transaction.amount);
+
+  if (transaction.type === "debit") {
+    return amount;
+  }
+
+  if (isPaymentLikeCredit(transaction)) {
+    return 0;
+  }
+
+  return amount;
+}
+
 function summarizeTransactions(transactions) {
   return transactions.reduce(
     (summary, transaction) => {
@@ -21,11 +59,14 @@ function summarizeTransactions(transactions) {
         summary.creditTotal += Math.abs(amount);
       }
 
+      summary.spendTotal += getSpendImpact(transaction);
+
       return summary;
     },
     {
       debitTotal: 0,
       creditTotal: 0,
+      spendTotal: 0,
     },
   );
 }
@@ -75,7 +116,8 @@ function mapStatement(statement) {
     transactionCount: transactions.length,
     debitTotal: transactionSummary.debitTotal,
     creditTotal: transactionSummary.creditTotal,
-    netSpend: transactionSummary.debitTotal - transactionSummary.creditTotal,
+    spendTotal: Math.max(0, roundCurrency(transactionSummary.spendTotal)),
+    netSpend: Math.max(0, roundCurrency(transactionSummary.spendTotal)),
     importedAt: toIsoDate(statement.importedAt),
     transactions,
   };
@@ -129,7 +171,6 @@ async function recalculateMonthlySpendingForMonths(transactionClient, monthStart
     const monthEnd = getNextUtcMonthStart(monthStart);
     const transactions = await transactionClient.cardTransaction.findMany({
       where: {
-        type: "debit",
         postedOnDate: {
           gte: monthStart,
           lt: monthEnd,
@@ -137,11 +178,16 @@ async function recalculateMonthlySpendingForMonths(transactionClient, monthStart
       },
       select: {
         amount: true,
+        description: true,
+        type: true,
       },
     });
 
-    const totalSpend = roundCurrency(
-      transactions.reduce((summary, transaction) => summary + toNumber(transaction.amount), 0),
+    const totalSpend = Math.max(
+      0,
+      roundCurrency(
+        transactions.reduce((summary, transaction) => summary + getSpendImpact(transaction), 0),
+      ),
     );
 
     if (totalSpend > 0) {
@@ -204,15 +250,14 @@ async function backfillMissingTransactionDates(transactionClient) {
 }
 
 async function rebuildMonthlySpending(transactionClient) {
-  const debitTransactions = await transactionClient.cardTransaction.findMany({
-    where: {
-      type: "debit",
-    },
+  const transactions = await transactionClient.cardTransaction.findMany({
     select: {
       postedOnDate: true,
       postedOnMonth: true,
       postedOnDay: true,
+      description: true,
       amount: true,
+      type: true,
       statement: {
         select: {
           statementDate: true,
@@ -223,7 +268,7 @@ async function rebuildMonthlySpending(transactionClient) {
 
   const totalsByMonth = new Map();
 
-  for (const transaction of debitTransactions) {
+  for (const transaction of transactions) {
     const postedOnDate = getTransactionPostedOnDate(
       transaction,
       transaction.statement.statementDate,
@@ -234,7 +279,7 @@ async function rebuildMonthlySpending(transactionClient) {
 
     totalsByMonth.set(monthKey, {
       monthStart,
-      totalSpend: currentTotal + toNumber(transaction.amount),
+      totalSpend: currentTotal + getSpendImpact(transaction),
     });
   }
 
@@ -244,8 +289,9 @@ async function rebuildMonthlySpending(transactionClient) {
     .sort((left, right) => left.monthStart.getTime() - right.monthStart.getTime())
     .map((entry) => ({
       monthStart: entry.monthStart,
-      totalSpend: roundCurrency(entry.totalSpend),
-    }));
+      totalSpend: Math.max(0, roundCurrency(entry.totalSpend)),
+    }))
+    .filter((entry) => entry.totalSpend > 0);
 
   if (monthlySpendingRows.length > 0) {
     await transactionClient.monthlySpending.createMany({
@@ -437,7 +483,7 @@ export async function getDashboardSnapshot() {
       summary.totalOutstanding += card.remainingPayable;
       summary.totalDue += card.remainingAmountDue;
       summary.totalTransactions += card.transactionCount;
-      summary.monthlySpend += card.debitTotal;
+      summary.monthlySpend += card.spendTotal;
       summary.monthlyCredits += card.creditTotal;
       return summary;
     },
