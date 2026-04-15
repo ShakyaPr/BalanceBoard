@@ -89,7 +89,29 @@ function getCardVisual(index) {
   return cardVisuals[index % cardVisuals.length];
 }
 
-function getCardStatus(dueDate) {
+function isAmountSettled(value) {
+  return Number(value ?? 0) <= 0;
+}
+
+function getCardStatus(card) {
+  if (isAmountSettled(card.totalPayable)) {
+    return {
+      label: "Paid",
+      tone: "active",
+      icon: "check_circle",
+    };
+  }
+
+  if (isAmountSettled(card.amountDue)) {
+    return {
+      label: "Active",
+      tone: "active",
+      icon: "check_circle",
+    };
+  }
+
+  const { dueDate } = card;
+
   if (!dueDate) {
     return {
       label: "Awaiting Date",
@@ -110,7 +132,7 @@ function getCardStatus(dueDate) {
 
   if (daysUntilDue <= 7) {
     return {
-      label: "Soon to Overdue",
+      label: "Due Soon",
       tone: "soon",
       icon: "event_upcoming",
     };
@@ -204,7 +226,23 @@ function SummaryCard({
   onPaymentSubmit,
 }) {
   const visual = getCardVisual(index);
-  const status = getCardStatus(card.dueDate);
+  const status = getCardStatus(card);
+  const paymentOptions = [
+    {
+      label: "Use minimum due",
+      value: Number(card.amountDue ?? 0),
+    },
+    {
+      label: "Use total payable",
+      value: Number(card.totalPayable ?? 0),
+    },
+  ].filter((option, optionIndex, collection) => {
+    if (option.value <= 0) {
+      return false;
+    }
+
+    return collection.findIndex((candidate) => candidate.value === option.value) === optionIndex;
+  });
 
   return (
     <article className="summary-card">
@@ -250,7 +288,7 @@ function SummaryCard({
         </div>
 
         <div className="summary-metric">
-          <span>Minimum Payment</span>
+          <span>Minimum Due Remaining</span>
           <strong className="metric-emphasis">{formatCurrency(card.amountDue)}</strong>
         </div>
 
@@ -268,8 +306,22 @@ function SummaryCard({
             onPaymentSubmit();
           }}
         >
+          <div className="payment-quick-actions">
+            {paymentOptions.map((option) => (
+              <button
+                key={option.label}
+                type="button"
+                className="payment-quick-action"
+                onClick={() => onPaymentDraftChange(option.value.toFixed(2))}
+              >
+                <span>{option.label}</span>
+                <strong>{formatCurrency(option.value)}</strong>
+              </button>
+            ))}
+          </div>
+
           <label className="payment-field">
-            <span>Add paid amount</span>
+            <span>Manual paid amount</span>
             <input
               type="number"
               min="0.01"
@@ -365,7 +417,7 @@ function OverviewPage({
 
           <div className="executive-meta-grid">
             <div className="executive-meta-card">
-              <span>Amount due now</span>
+              <span>Minimum due remaining</span>
               <strong>{formatCurrency(totals.totalDue)}</strong>
             </div>
             <div className="executive-meta-card">
@@ -401,7 +453,7 @@ function OverviewPage({
                   key={card.id}
                   card={card}
                   index={index}
-                  onOpen={() => onOpenCard(card.id)}
+                  onOpen={() => onOpenCard(card)}
                   paymentDraft={paymentDrafts[card.statementId] ?? ""}
                   paymentOpen={openPaymentStatementId === card.statementId}
                   paymentSubmitting={submittingPaymentStatementId === card.statementId}
@@ -482,7 +534,7 @@ function CardDetailsPage({
               </article>
 
               <article className="details-summary-card">
-                <span>Minimum Payment</span>
+                <span>Minimum Due Remaining</span>
                 <strong>{formatCurrency(selectedStatement.amountDue)}</strong>
               </article>
             </section>
@@ -647,9 +699,10 @@ function App() {
   const cards = dashboard?.cards ?? [];
   const isDetailPage = Boolean(selectedCardId);
 
-  function openCard(cardId) {
-    setSelectedCardId(cardId);
-    writeSelectedCardIdToUrl(cardId);
+  function openCard(card) {
+    setSelectedCardId(card.id);
+    setSelectedStatementId(card.statementId);
+    writeSelectedCardIdToUrl(card.id);
   }
 
   function closeCardDetails() {

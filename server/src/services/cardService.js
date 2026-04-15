@@ -76,6 +76,17 @@ function mapStatement(statement) {
   };
 }
 
+function compareStatementsByRecency(left, right) {
+  const statementDateDifference =
+    new Date(right.statementDate).getTime() - new Date(left.statementDate).getTime();
+
+  if (statementDateDifference !== 0) {
+    return statementDateDifference;
+  }
+
+  return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+}
+
 export async function upsertStatement(normalizedStatement) {
   return prisma.$transaction(async (transactionClient) => {
     const card = await transactionClient.creditCard.upsert({
@@ -169,7 +180,7 @@ export async function getDashboardSnapshot() {
 
   const latestCardSnapshots = cards
     .map((card) => {
-      const latestStatement = card.statements[0];
+      const latestStatement = [...card.statements].sort(compareStatementsByRecency)[0];
 
       if (!latestStatement) {
         return null;
@@ -264,7 +275,9 @@ export async function getCardDetails(cardId) {
     throw new NotFoundError("Card not found.");
   }
 
-  const statements = card.statements.map((statement) => mapStatement(statement));
+  const statements = [...card.statements]
+    .sort(compareStatementsByRecency)
+    .map((statement) => mapStatement(statement));
 
   return {
     cardId: card.id,

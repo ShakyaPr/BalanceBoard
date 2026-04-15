@@ -487,13 +487,47 @@ code {
   margin-top: 1rem;
   padding-top: 1rem;
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 0.9rem;
   border-top: 1px solid rgba(193, 199, 210, 0.34);
 }
 
+.payment-quick-actions {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+}
+
+.payment-quick-action {
+  min-width: 12rem;
+  padding: 0.8rem 0.95rem;
+  border: 1px solid rgba(193, 199, 210, 0.4);
+  border-radius: 12px;
+  background: rgba(0, 66, 119, 0.04);
+  color: var(--text);
+  text-align: left;
+}
+
+.payment-quick-action span {
+  display: block;
+  margin-bottom: 0.28rem;
+  color: var(--text-soft);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.payment-quick-action strong {
+  font-size: 0.98rem;
+  font-weight: 700;
+}
+
 .payment-field {
   flex: 1;
+  min-width: 12rem;
 }
 
 .payment-field input,
@@ -716,6 +750,11 @@ tbody td {
 
   .payment-field {
     width: 100%;
+  }
+
+  .payment-quick-action {
+    width: 100%;
+    min-width: 0;
   }
 
   .payment-submit {
