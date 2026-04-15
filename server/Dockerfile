@@ -15,5 +15,4 @@ RUN npx prisma generate
 
 EXPOSE 4000
 
-CMD ["sh", "-c", "npx prisma db push && node src/index.js"]
-
+CMD ["sh", "-c", "npx prisma db push ${PRISMA_DB_PUSH_FLAGS:-} && node src/index.js"]
