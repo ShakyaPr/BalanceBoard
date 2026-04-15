@@ -10,6 +10,7 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       PORT: ${PORT:-4000}
+      PRISMA_DB_PUSH_FLAGS: ${PRISMA_DB_PUSH_FLAGS:-}
       DATABASE_URL: ${DATABASE_URL:-}
       DB_HOST: ${DB_HOST:-}
       DB_PORT: ${DB_PORT:-5432}
