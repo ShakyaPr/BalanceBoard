@@ -441,6 +441,22 @@ code {
   font-weight: 600;
 }
 
+.executive-amount-row strong {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+}
+
+.executive-currency {
+  font-size: 0.68em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.executive-currency-value {
+  font-size: 1em;
+}
+
 .summary-metric .metric-emphasis {
   color: var(--danger);
 }

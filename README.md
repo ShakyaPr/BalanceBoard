@@ -88,6 +88,7 @@ The backend accepts either `minimum_amount` or `total_payable` for the minimum d
 The repo now includes:
 
 - [docker-compose.yml](/Users/shakya/Documents/personal-files/finance-mgt/BalanceBoard/docker-compose.yml)
+- [docker-compose.dokploy.yml](/Users/shakya/Documents/personal-files/finance-mgt/BalanceBoard/docker-compose.dokploy.yml)
 - [server/Dockerfile](/Users/shakya/Documents/personal-files/finance-mgt/BalanceBoard/server/Dockerfile)
 - [client/Dockerfile](/Users/shakya/Documents/personal-files/finance-mgt/BalanceBoard/client/Dockerfile)
 - [client/nginx.conf](/Users/shakya/Documents/personal-files/finance-mgt/BalanceBoard/client/nginx.conf)
@@ -199,6 +200,28 @@ docker compose up --build
 - `npx prisma generate` does not connect to the database or change tables. It only builds the client library.
 - `npx prisma db push` is the command that actually syncs the schema to the target database.
 - For service deployment with another DB container, the only required change is setting `DATABASE_URL` or the `DB_*` variables in `.env` to that container's reachable hostname on a shared Docker network.
+
+## Dokploy
+
+For Dokploy, use the Docker Compose service type and point it to [docker-compose.dokploy.yml](/Users/shakya/Documents/personal-files/finance-mgt/BalanceBoard/docker-compose.dokploy.yml). This file is intended for Git-based deployment and avoids fixed host port bindings, which is usually a better fit for Dokploy domains and shared hosts.
+
+### Recommended Dokploy setup
+
+1. Create a `Docker Compose` app in Dokploy.
+2. Connect your Git repository and branch.
+3. Set the compose path to `docker-compose.dokploy.yml`.
+4. Add the variables from [.env.dokploy.example](/Users/shakya/Documents/personal-files/finance-mgt/BalanceBoard/.env.dokploy.example) in Dokploy's environment variables UI.
+5. In Dokploy Domains, route your public domain to:
+   `client` service on port `80`
+
+### DB connectivity for Dokploy
+
+If your PostgreSQL container is started separately, it must be reachable from the Dokploy-deployed services:
+
+- Preferred: attach that DB container to the same Docker network named by `APP_NETWORK`
+- Alternative: use `DB_HOST=host.docker.internal` if the DB is exposed on the host and reachable through the host gateway
+
+If you use the Docker network approach, `DB_HOST` should be the DB container name or alias on that network.
 
 ## Dashboard behavior
 

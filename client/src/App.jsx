@@ -39,6 +39,23 @@ function formatCurrency(value) {
   return currencyFormatter.format(Number(value ?? 0));
 }
 
+function renderExecutiveCurrency(value) {
+  const parts = currencyFormatter.formatToParts(Number(value ?? 0));
+  const currency = parts.find((part) => part.type === "currency")?.value ?? "LKR";
+  const amount = parts
+    .filter((part) => part.type !== "currency")
+    .map((part) => part.value)
+    .join("")
+    .trim();
+
+  return (
+    <>
+      <span className="executive-currency">{currency}</span>
+      <span className="executive-currency-value">{amount}</span>
+    </>
+  );
+}
+
 function formatDate(value) {
   if (!value) {
     return "No date";
@@ -334,7 +351,7 @@ function OverviewPage({
           <p className="section-kicker">Executive Overview</p>
           <h2>Total Amount to be Paid</h2>
           <div className="executive-amount-row">
-            <strong>{formatCurrency(totals.totalOutstanding)}</strong>
+            <strong>{renderExecutiveCurrency(totals.totalOutstanding)}</strong>
             <span className="executive-note">
               <span className="material-symbols-outlined">monitoring</span>
               {getExecutiveNote(totals)}
