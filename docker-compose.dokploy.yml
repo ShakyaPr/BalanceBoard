@@ -37,3 +37,4 @@ networks:
   app_network:
     name: ${APP_NETWORK:-balanceboard-net}
     driver: bridge
+    external: true
