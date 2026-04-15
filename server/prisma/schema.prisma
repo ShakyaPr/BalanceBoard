@@ -32,6 +32,7 @@ model CardStatement {
   transactions     CardTransaction[]
 
   @@unique([creditCardId, statementDate])
+  @@unique([creditCardId, rawStatementDate])
   @@index([statementDate])
   @@index([dueDate])
 }

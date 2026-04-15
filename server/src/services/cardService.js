@@ -318,6 +318,24 @@ export async function upsertStatement(normalizedStatement) {
         name: normalizedStatement.cardName,
       },
     });
+    const existingRawStatement = await transactionClient.cardStatement.findUnique({
+      where: {
+        creditCardId_rawStatementDate: {
+          creditCardId: card.id,
+          rawStatementDate: normalizedStatement.rawStatementDate,
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (existingRawStatement) {
+      throw new RequestValidationError(
+        "This statement has already been imported for the selected card.",
+      );
+    }
+
     const missingTransactionDateCount = await backfillMissingTransactionDates(transactionClient);
     const monthlySpendingCount = await transactionClient.monthlySpending.count();
     const requiresFullMonthlyRebuild =
