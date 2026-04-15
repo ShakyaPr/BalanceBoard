@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { detectDateOrder, parseMonthDay, parseShortYearDate } from "../utils/date.js";
+import {
+  detectDateOrder,
+  inferTransactionDate,
+  parseMonthDay,
+  parseShortYearDate,
+} from "../utils/date.js";
 
 const transactionSchema = z.object({
   date: z.string().regex(/^\d{2}\/\d{2}$/, "Transaction date must use MM/DD or DD/MM."),
@@ -35,13 +40,15 @@ export function normalizeStatementPayload(payload) {
     parsed.due_date,
     ...parsed.transactions.map((transaction) => transaction.date),
   ]);
+  const statementDate = parseShortYearDate(parsed.date, "date", dateOrder);
+  const dueDate = parseShortYearDate(parsed.due_date, "due_date", dateOrder);
 
   return {
     cardName: parsed.name.trim(),
     rawStatementDate: parsed.date,
-    statementDate: parseShortYearDate(parsed.date, "date", dateOrder),
+    statementDate,
     rawDueDate: parsed.due_date,
-    dueDate: parseShortYearDate(parsed.due_date, "due_date", dateOrder),
+    dueDate,
     totalPayable: parsed.monthly_amount,
     amountDue: parsed.minimum_amount ?? parsed.total_payable,
     transactions: parsed.transactions.map((transaction, index) => {
@@ -50,9 +57,16 @@ export function normalizeStatementPayload(payload) {
         `transactions[${index}].date`,
         dateOrder,
       );
+      const postedOnDate = inferTransactionDate({
+        statementDate,
+        month: parsedDate.month,
+        day: parsedDate.day,
+        fieldName: `transactions[${index}].date`,
+      });
 
       return {
         postedOnLabel: parsedDate.label,
+        postedOnDate,
         postedOnMonth: parsedDate.month,
         postedOnDay: parsedDate.day,
         description: transaction.description.trim(),

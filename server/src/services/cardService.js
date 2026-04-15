@@ -1,9 +1,13 @@
 import { prisma } from "../db/prisma.js";
-import { toIsoDate } from "../utils/date.js";
+import { getUtcMonthStart, inferTransactionDate, toIsoDate } from "../utils/date.js";
 import { NotFoundError, RequestValidationError } from "../utils/errors.js";
 
 function toNumber(value) {
   return Number(value ?? 0);
+}
+
+function roundCurrency(value) {
+  return Number(toNumber(value).toFixed(2));
 }
 
 function summarizeTransactions(transactions) {
@@ -33,6 +37,7 @@ function mapTransaction(transaction, context = {}) {
     statementId: transaction.statementId,
     statementDate: context.statementDate ? toIsoDate(context.statementDate) : undefined,
     postedOnLabel: transaction.postedOnLabel,
+    postedOnDate: transaction.postedOnDate ? toIsoDate(transaction.postedOnDate) : undefined,
     description: transaction.description,
     amount: toNumber(transaction.amount),
     type: transaction.type,
@@ -87,6 +92,177 @@ function compareStatementsByRecency(left, right) {
   return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
 }
 
+function getNextUtcMonthStart(value) {
+  const monthStart = getUtcMonthStart(value);
+  return new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 1));
+}
+
+function getTransactionPostedOnDate(transaction, statementDate) {
+  if (transaction.postedOnDate) {
+    return new Date(transaction.postedOnDate);
+  }
+
+  return inferTransactionDate({
+    statementDate,
+    month: transaction.postedOnMonth,
+    day: transaction.postedOnDay,
+  });
+}
+
+function getUniqueMonthStarts(values) {
+  const monthsByKey = new Map();
+
+  for (const value of values) {
+    if (!value) {
+      continue;
+    }
+
+    const monthStart = getUtcMonthStart(value);
+    monthsByKey.set(monthStart.toISOString(), monthStart);
+  }
+
+  return [...monthsByKey.values()].sort((left, right) => left.getTime() - right.getTime());
+}
+
+async function recalculateMonthlySpendingForMonths(transactionClient, monthStarts) {
+  for (const monthStart of getUniqueMonthStarts(monthStarts)) {
+    const monthEnd = getNextUtcMonthStart(monthStart);
+    const transactions = await transactionClient.cardTransaction.findMany({
+      where: {
+        type: "debit",
+        postedOnDate: {
+          gte: monthStart,
+          lt: monthEnd,
+        },
+      },
+      select: {
+        amount: true,
+      },
+    });
+
+    const totalSpend = roundCurrency(
+      transactions.reduce((summary, transaction) => summary + toNumber(transaction.amount), 0),
+    );
+
+    if (totalSpend > 0) {
+      await transactionClient.monthlySpending.upsert({
+        where: {
+          monthStart,
+        },
+        update: {
+          totalSpend,
+        },
+        create: {
+          monthStart,
+          totalSpend,
+        },
+      });
+      continue;
+    }
+
+    await transactionClient.monthlySpending.deleteMany({
+      where: {
+        monthStart,
+      },
+    });
+  }
+}
+
+async function backfillMissingTransactionDates(transactionClient) {
+  const transactionsMissingDates = await transactionClient.cardTransaction.findMany({
+    where: {
+      postedOnDate: null,
+    },
+    select: {
+      id: true,
+      postedOnMonth: true,
+      postedOnDay: true,
+      statement: {
+        select: {
+          statementDate: true,
+        },
+      },
+    },
+  });
+
+  for (const transaction of transactionsMissingDates) {
+    await transactionClient.cardTransaction.update({
+      where: {
+        id: transaction.id,
+      },
+      data: {
+        postedOnDate: inferTransactionDate({
+          statementDate: transaction.statement.statementDate,
+          month: transaction.postedOnMonth,
+          day: transaction.postedOnDay,
+        }),
+      },
+    });
+  }
+
+  return transactionsMissingDates.length;
+}
+
+async function rebuildMonthlySpending(transactionClient) {
+  const debitTransactions = await transactionClient.cardTransaction.findMany({
+    where: {
+      type: "debit",
+    },
+    select: {
+      postedOnDate: true,
+      postedOnMonth: true,
+      postedOnDay: true,
+      amount: true,
+      statement: {
+        select: {
+          statementDate: true,
+        },
+      },
+    },
+  });
+
+  const totalsByMonth = new Map();
+
+  for (const transaction of debitTransactions) {
+    const postedOnDate = getTransactionPostedOnDate(
+      transaction,
+      transaction.statement.statementDate,
+    );
+    const monthStart = getUtcMonthStart(postedOnDate);
+    const monthKey = monthStart.toISOString();
+    const currentTotal = totalsByMonth.get(monthKey)?.totalSpend ?? 0;
+
+    totalsByMonth.set(monthKey, {
+      monthStart,
+      totalSpend: currentTotal + toNumber(transaction.amount),
+    });
+  }
+
+  await transactionClient.monthlySpending.deleteMany({});
+
+  const monthlySpendingRows = [...totalsByMonth.values()]
+    .sort((left, right) => left.monthStart.getTime() - right.monthStart.getTime())
+    .map((entry) => ({
+      monthStart: entry.monthStart,
+      totalSpend: roundCurrency(entry.totalSpend),
+    }));
+
+  if (monthlySpendingRows.length > 0) {
+    await transactionClient.monthlySpending.createMany({
+      data: monthlySpendingRows,
+    });
+  }
+}
+
+async function ensureMonthlySpendingIsReady(transactionClient) {
+  const missingTransactionDateCount = await backfillMissingTransactionDates(transactionClient);
+  const monthlySpendingCount = await transactionClient.monthlySpending.count();
+
+  if (missingTransactionDateCount > 0 || monthlySpendingCount === 0) {
+    await rebuildMonthlySpending(transactionClient);
+  }
+}
+
 export async function upsertStatement(normalizedStatement) {
   return prisma.$transaction(async (transactionClient) => {
     const card = await transactionClient.creditCard.upsert({
@@ -96,7 +272,37 @@ export async function upsertStatement(normalizedStatement) {
         name: normalizedStatement.cardName,
       },
     });
+    const missingTransactionDateCount = await backfillMissingTransactionDates(transactionClient);
+    const monthlySpendingCount = await transactionClient.monthlySpending.count();
+    const requiresFullMonthlyRebuild =
+      missingTransactionDateCount > 0 || monthlySpendingCount === 0;
 
+    const existingStatement = await transactionClient.cardStatement.findUnique({
+      where: {
+        creditCardId_statementDate: {
+          creditCardId: card.id,
+          statementDate: normalizedStatement.statementDate,
+        },
+      },
+      select: {
+        statementDate: true,
+        transactions: {
+          select: {
+            postedOnDate: true,
+            postedOnMonth: true,
+            postedOnDay: true,
+          },
+        },
+      },
+    });
+
+    const existingMonthStarts =
+      existingStatement?.transactions.map((transaction) =>
+        getTransactionPostedOnDate(transaction, existingStatement.statementDate),
+      ) ?? [];
+    const nextMonthStarts = normalizedStatement.transactions.map(
+      (transaction) => transaction.postedOnDate,
+    );
     const updateTransactions = {
       deleteMany: {},
       ...(normalizedStatement.transactions.length > 0
@@ -144,6 +350,15 @@ export async function upsertStatement(normalizedStatement) {
         },
       },
     });
+
+    if (requiresFullMonthlyRebuild) {
+      await rebuildMonthlySpending(transactionClient);
+    } else {
+      await recalculateMonthlySpendingForMonths(transactionClient, [
+        ...existingMonthStarts,
+        ...nextMonthStarts,
+      ]);
+    }
 
     return mapStatement(statement);
   });
@@ -246,6 +461,66 @@ export async function getDashboardSnapshot() {
     cards: latestCardSnapshots,
     recentTransactions,
   };
+}
+
+export async function getAnalyticsSnapshot() {
+  return prisma.$transaction(async (transactionClient) => {
+    await ensureMonthlySpendingIsReady(transactionClient);
+
+    const spendingSeries = await transactionClient.monthlySpending.findMany({
+      orderBy: {
+        monthStart: "asc",
+      },
+    });
+    const series = spendingSeries.map((entry) => ({
+      monthStart: toIsoDate(entry.monthStart),
+      totalSpend: toNumber(entry.totalSpend),
+    }));
+    const latestMonth = series[series.length - 1] ?? null;
+    const previousMonth = series[series.length - 2] ?? null;
+    const highestMonth = series.reduce(
+      (highestEntry, entry) =>
+        !highestEntry || entry.totalSpend > highestEntry.totalSpend ? entry : highestEntry,
+      null,
+    );
+    const averageMonthlySpend =
+      series.length > 0
+        ? roundCurrency(
+            series.reduce((summary, entry) => summary + entry.totalSpend, 0) / series.length,
+          )
+        : 0;
+    const monthOverMonthAmount =
+      latestMonth && previousMonth
+        ? roundCurrency(latestMonth.totalSpend - previousMonth.totalSpend)
+        : null;
+    const monthOverMonthPercentage =
+      previousMonth && previousMonth.totalSpend > 0 && monthOverMonthAmount !== null
+        ? roundCurrency((monthOverMonthAmount / previousMonth.totalSpend) * 100)
+        : null;
+    const monthOverMonthDirection =
+      monthOverMonthAmount === null || monthOverMonthAmount === 0
+        ? "flat"
+        : monthOverMonthAmount > 0
+          ? "up"
+          : "down";
+
+    return {
+      generatedAt: new Date().toISOString(),
+      summary: {
+        monthsTracked: series.length,
+        latestMonthStart: latestMonth?.monthStart ?? null,
+        latestMonthSpend: latestMonth?.totalSpend ?? 0,
+        previousMonthSpend: previousMonth?.totalSpend ?? 0,
+        highestMonthStart: highestMonth?.monthStart ?? null,
+        highestMonthSpend: highestMonth?.totalSpend ?? 0,
+        averageMonthlySpend,
+        monthOverMonthAmount,
+        monthOverMonthPercentage,
+        monthOverMonthDirection,
+      },
+      series,
+    };
+  });
 }
 
 export async function getCardDetails(cardId) {

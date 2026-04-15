@@ -41,6 +41,7 @@ model CardTransaction {
   statementId   String
   statement     CardStatement   @relation(fields: [statementId], references: [id], onDelete: Cascade)
   postedOnLabel String
+  postedOnDate  DateTime?
   postedOnMonth Int
   postedOnDay   Int
   description   String
@@ -51,6 +52,17 @@ model CardTransaction {
 
   @@unique([statementId, position])
   @@index([statementId, postedOnMonth, postedOnDay])
+  @@index([postedOnDate])
+}
+
+model MonthlySpending {
+  id         String   @id @default(cuid())
+  monthStart DateTime @unique
+  totalSpend Decimal  @db.Decimal(12, 2)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([monthStart])
 }
 
 enum TransactionType {
